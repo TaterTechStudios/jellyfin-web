@@ -441,6 +441,21 @@ export default function () {
 
         context.querySelector('.positionTime').innerHTML = Number.isFinite(positionTicks) ? datetime.getDisplayRunningTime(positionTicks) : '--:--';
         context.querySelector('.runtime').innerHTML = Number.isFinite(runtimeTicks) ? datetime.getDisplayRunningTime(runtimeTicks) : '--:--';
+
+        const chapterNameEl = context.querySelector('.nowPlayingChapterName');
+        if (chapterNameEl) {
+            const chapters = lastPlayerState?.NowPlayingItem?.Chapters;
+            if (chapters?.length && Number.isFinite(positionTicks)) {
+                let chapter;
+                for (let i = chapters.length - 1; i >= 0; i--) {
+                    if (chapters[i].StartPositionTicks <= positionTicks) { chapter = chapters[i]; break; }
+                }
+                chapterNameEl.textContent = chapter ? chapter.Name : '';
+                chapterNameEl.style.display = chapter ? '' : 'none';
+            } else {
+                chapterNameEl.style.display = 'none';
+            }
+        }
     }
 
     function getPlaylistItems(player) {
@@ -788,10 +803,28 @@ export default function () {
                 return '--:--';
             }
 
-            let ticks = currentRuntimeTicks;
-            ticks /= 100;
-            ticks *= value;
-            return datetime.getDisplayRunningTime(ticks);
+            const ticks = currentRuntimeTicks / 100 * value;
+            let text = datetime.getDisplayRunningTime(ticks);
+
+            const chapters = state.NowPlayingItem.Chapters;
+            if (chapters?.length) {
+                let chapter;
+                for (let i = chapters.length - 1; i >= 0; i--) {
+                    if (chapters[i].StartPositionTicks <= ticks) { chapter = chapters[i]; break; }
+                }
+                if (chapter) text += ' · ' + chapter.Name;
+            }
+
+            return text;
+        };
+
+        positionSlider.getMarkerInfo = function () {
+            const item = lastPlayerState?.NowPlayingItem;
+            if (!item?.Chapters?.length || !item.RunTimeTicks) return [];
+            return item.Chapters.map(chapter => ({
+                name: chapter.Name,
+                progress: chapter.StartPositionTicks / item.RunTimeTicks
+            }));
         };
 
         context.querySelector('.nowPlayingVolumeSlider').addEventListener('input', (e) => {

@@ -83,6 +83,13 @@ export async function getCommands(options) {
                 icon: 'clear_all'
             });
         }
+        if (item.Type === 'AudioBook') {
+            commands.push({
+                name: globalize.translate('Chapters'),
+                id: 'audiobookChapters',
+                icon: 'list'
+            });
+        }
     }
 
     if (playbackManager.canQueue(item)) {
@@ -375,6 +382,45 @@ export async function getCommands(options) {
     return commands;
 }
 
+function showAudioBookChapterMenu() {
+    const player = playbackManager.getCurrentPlayer();
+    const liveItem = playbackManager.currentItem(player);
+    if (!liveItem) return Promise.resolve();
+
+    const apiClient = ServerConnections.getApiClient(liveItem.ServerId);
+
+    return apiClient.getItems(apiClient.getCurrentUserId(), {
+        Ids: [liveItem.Id],
+        Fields: ['Chapters']
+    }).then(function (result) {
+        const chapters = result.Items?.[0]?.Chapters || [];
+        if (!chapters.length) return;
+
+        const currentTicks = playbackManager.getCurrentTicks(player);
+        let currentChapterIndex = -1;
+        for (let i = chapters.length - 1; i >= 0; i--) {
+            if (chapters[i].StartPositionTicks <= currentTicks) {
+                currentChapterIndex = i;
+                break;
+            }
+        }
+
+        const menuItems = chapters.map((chapter, index) => ({
+            name: chapter.Name || ('Chapter ' + (index + 1)),
+            id: String(index),
+            selected: index === currentChapterIndex
+        }));
+
+        return actionsheet.show({
+            items: menuItems
+        }).then(function (id) {
+            if (id != null && id !== '') {
+                playbackManager.seek(chapters[parseInt(id, 10)].StartPositionTicks, player);
+            }
+        });
+    });
+}
+
 function getResolveFunction(resolve, commandId, changed, deleted, itemId) {
     return function () {
         resolve({
@@ -655,6 +701,10 @@ function executeCommand(item, id, options) {
                 break;
             case 'cancelseriestimer':
                 deleteSeriesTimer(apiClient, item, resolve, id);
+                break;
+            case 'audiobookChapters':
+                showAudioBookChapterMenu();
+                getResolveFunction(resolve, id)();
                 break;
             default:
                 reject();

@@ -25,6 +25,8 @@ let currentPlayer;
 let currentPlayerSupportedCommands = [];
 
 let currentTimeElement;
+let chapterNameElement;
+let currentChapters = null;
 let nowPlayingImageElement;
 let nowPlayingImageUrl;
 let nowPlayingTextElement;
@@ -55,6 +57,7 @@ function getNowPlayingBarHtml() {
 
     html += '<div class="nowPlayingBarTop">';
     html += '<div class="nowPlayingBarPositionContainer sliderContainer" dir="ltr">';
+    html += '<div class="sliderMarkerContainer"></div>';
     html += '<input type="range" is="emby-slider" pin step=".01" min="0" max="100" value="0" class="slider-medium-thumb nowPlayingBarPositionSlider" data-slider-keep-progress="true"/>';
     html += '</div>';
 
@@ -76,6 +79,7 @@ function getNowPlayingBarHtml() {
     }
 
     html += '<div class="nowPlayingBarCurrentTime"></div>';
+    html += '<div class="nowPlayingBarChapterName hide"></div>';
     html += '</div>';
 
     html += '<div class="nowPlayingBarRight">';
@@ -145,10 +149,20 @@ function onPlayPauseClick() {
 
 function bindEvents(elem) {
     currentTimeElement = elem.querySelector('.nowPlayingBarCurrentTime');
+    chapterNameElement = elem.querySelector('.nowPlayingBarChapterName');
     nowPlayingImageElement = elem.querySelector('.nowPlayingImage');
     nowPlayingTextElement = elem.querySelector('.nowPlayingBarText');
     nowPlayingUserData = elem.querySelector('.nowPlayingBarUserDataButtons');
     positionSlider = elem.querySelector('.nowPlayingBarPositionSlider');
+    positionSlider.getMarkerInfo = function () {
+        if (!currentChapters?.length) return [];
+        const item = currentPlayer ? playbackManager.currentItem(currentPlayer) : null;
+        if (!item?.RunTimeTicks) return [];
+        return currentChapters.map(chapter => ({
+            name: chapter.Name,
+            progress: chapter.StartPositionTicks / item.RunTimeTicks
+        }));
+    };
     muteButton = elem.querySelector('.muteButton');
     playPauseButtons = elem.querySelectorAll('.playPauseButton');
     toggleRepeatButton = elem.querySelector('.toggleRepeatButton');
@@ -174,12 +188,27 @@ function bindEvents(elem) {
 
     elem.querySelector('.nextTrackButton').addEventListener('click', function () {
         if (currentPlayer) {
-            playbackManager.nextTrack(currentPlayer);
+            const item = playbackManager.currentItem(currentPlayer);
+            if (item?.Type === 'AudioBook' && currentChapters?.length > 0) {
+                playbackManager.nextChapter(currentPlayer);
+            } else {
+                playbackManager.nextTrack(currentPlayer);
+            }
         }
     });
 
     elem.querySelector('.previousTrackButton').addEventListener('click', function (e) {
         if (currentPlayer) {
+            const item = playbackManager.currentItem(currentPlayer);
+            if (item?.Type === 'AudioBook' && currentChapters?.length > 0) {
+                // Cancel this event if doubleclick is fired. The dblclick handler goes to previous track.
+                if (e.detail > 1) {
+                    return;
+                }
+                playbackManager.previousChapter(currentPlayer);
+                return;
+            }
+
             if (playbackManager.isPlayingAudio(currentPlayer)) {
                 // Cancel this event if doubleclick is fired. The actual previousTrack will be processed by the 'dblclick' event
                 if (e.detail > 1 ) {
@@ -268,11 +297,17 @@ function bindEvents(elem) {
             return '--:--';
         }
 
-        let ticks = currentRuntimeTicks;
-        ticks /= 100;
-        ticks *= value;
+        const ticks = currentRuntimeTicks / 100 * value;
+        let text = datetime.getDisplayRunningTime(ticks);
 
-        return datetime.getDisplayRunningTime(ticks);
+        if (currentChapters?.length) {
+            const chapter = getCurrentChapter(ticks, currentChapters);
+            if (chapter) {
+                text += ' · ' + chapter.Name;
+            }
+        }
+
+        return text;
     };
 
     elem.addEventListener('click', function (e) {
@@ -369,7 +404,7 @@ function updatePlayerStateInternal(event, state, player) {
     }
 
     const nowPlayingItem = state.NowPlayingItem || {};
-    updateTimeDisplay(playState.PositionTicks, nowPlayingItem.RunTimeTicks, playbackManager.getBufferedRanges(player));
+    updateTimeDisplay(playState.PositionTicks, nowPlayingItem.RunTimeTicks, playbackManager.getBufferedRanges(player), nowPlayingItem);
 
     updateNowPlayingInfo(state);
     updateLyricButton(nowPlayingItem);
@@ -396,7 +431,17 @@ function updateRepeatModeDisplay(repeatMode) {
     }
 }
 
-function updateTimeDisplay(positionTicks, runtimeTicks, bufferedRanges) {
+function getCurrentChapter(positionTicks, chapters) {
+    if (!chapters?.length || positionTicks == null) return null;
+    for (let i = chapters.length - 1; i >= 0; i--) {
+        if (chapters[i].StartPositionTicks <= positionTicks) {
+            return chapters[i];
+        }
+    }
+    return null;
+}
+
+function updateTimeDisplay(positionTicks, runtimeTicks, bufferedRanges, nowPlayingItem) {
     // See bindEvents for why this is necessary
     if (positionSlider && !positionSlider.dragging) {
         if (runtimeTicks) {
@@ -420,6 +465,17 @@ function updateTimeDisplay(positionTicks, runtimeTicks, bufferedRanges) {
         }
 
         currentTimeElement.innerHTML = timeText;
+    }
+
+    if (chapterNameElement) {
+        const chapter = getCurrentChapter(positionTicks, currentChapters);
+        if (chapter) {
+            chapterNameElement.textContent = '· ' + chapter.Name;
+            chapterNameElement.classList.remove('hide');
+        } else {
+            chapterNameElement.textContent = '';
+            chapterNameElement.classList.add('hide');
+        }
     }
 }
 
@@ -552,9 +608,31 @@ function updateNowPlayingInfo(state) {
     }
 }
 
+function fetchAndCacheChapters(item) {
+    const apiClient = ServerConnections.getApiClient(item.ServerId);
+    apiClient.getItems(apiClient.getCurrentUserId(), {
+        Ids: [item.Id],
+        Fields: ['Chapters']
+    }).then(function (result) {
+        const chapters = result.Items?.[0]?.Chapters;
+        currentChapters = chapters?.length ? chapters : null;
+    }).catch(function () {
+        currentChapters = null;
+    });
+}
+
 function onPlaybackStart(e, state) {
     console.debug('nowplaying event: ' + e.type);
     const player = this;
+
+    const item = state?.NowPlayingItem;
+    if (item?.Chapters?.length) {
+        currentChapters = item.Chapters;
+    } else if (item?.Type === 'AudioBook') {
+        fetchAndCacheChapters(item);
+    } else {
+        currentChapters = null;
+    }
 
     onStateChanged.call(player, e, state);
 }
@@ -611,6 +689,7 @@ function hideNowPlayingBar() {
 
 function onPlaybackStopped(e, state) {
     console.debug('[nowPlayingBar:onPlaybackStopped] event: ' + e.type);
+    currentChapters = null;
 
     const player = this;
 
@@ -677,7 +756,7 @@ function onTimeUpdate() {
 
     const player = this;
     currentRuntimeTicks = playbackManager.duration(player);
-    updateTimeDisplay(playbackManager.currentTime(player) * 10000, currentRuntimeTicks, playbackManager.getBufferedRanges(player));
+    updateTimeDisplay(playbackManager.currentTime(player) * 10000, currentRuntimeTicks, playbackManager.getBufferedRanges(player), playbackManager.currentItem(player));
 }
 
 function releaseCurrentPlayer() {
