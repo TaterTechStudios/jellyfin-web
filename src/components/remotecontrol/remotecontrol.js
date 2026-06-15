@@ -428,7 +428,10 @@ export default function () {
     // Audible-style: for audiobooks with chapters, the position slider and time
     // readout represent the CURRENT chapter rather than the whole book.
     function getChapterList() {
-        return lastPlayerState?.NowPlayingItem?.Chapters;
+        // Prefer the full playing item (carries Chapters reliably, same source the mini player
+        // uses) and fall back to the player-state item, so the expanded player resolves chapters
+        // even when the state's NowPlayingItem is a trimmed object without Chapters.
+        return playbackManager.currentItem(currentPlayer)?.Chapters || lastPlayerState?.NowPlayingItem?.Chapters;
     }
 
     function chapterModeActive() {
@@ -506,17 +509,22 @@ export default function () {
 
         const chapterNameEl = context.querySelector('.nowPlayingChapterName');
         if (chapterNameEl) {
-            const chapters = lastPlayerState?.NowPlayingItem?.Chapters;
+            const chapters = getChapterList();
             if (chapters?.length && Number.isFinite(positionTicks)) {
                 let chapter;
+                let chapterIndex = -1;
                 for (let i = chapters.length - 1; i >= 0; i--) {
                     if (chapters[i].StartPositionTicks <= positionTicks) {
                         chapter = chapters[i];
+                        chapterIndex = i;
                         break;
                     }
                 }
-                chapterNameEl.textContent = chapter ? chapter.Name : '';
-                chapterNameEl.style.display = chapter ? '' : 'none';
+                // Fall back to "Chapter N" when the embedded chapter has no title (matches the
+                // context-menu chapter list), so the label is useful for title-less audiobooks.
+                chapterNameEl.textContent = chapter ? (chapter.Name || ('Chapter ' + (chapterIndex + 1))) : '';
+                // Use an explicit value, not '', so it overrides the stylesheet's display:none.
+                chapterNameEl.style.display = chapter ? 'block' : 'none';
             } else {
                 chapterNameEl.style.display = 'none';
             }
@@ -798,7 +806,12 @@ export default function () {
         });
         context.querySelector('.btnNextTrack').addEventListener('click', function () {
             if (currentPlayer) {
-                playbackManager.nextTrack(currentPlayer);
+                const item = playbackManager.currentItem(currentPlayer);
+                if (item?.Type === 'AudioBook' && item.Chapters?.length > 0) {
+                    playbackManager.nextChapter(currentPlayer);
+                } else {
+                    playbackManager.nextTrack(currentPlayer);
+                }
             }
         });
         context.querySelector('.btnRewind').addEventListener('click', function () {
@@ -825,6 +838,16 @@ export default function () {
 
         context.querySelector('.btnPreviousTrack').addEventListener('click', function (e) {
             if (currentPlayer) {
+                const item = playbackManager.currentItem(currentPlayer);
+                if (item?.Type === 'AudioBook' && item.Chapters?.length > 0) {
+                    // Cancel this event if doubleclick is fired. The dblclick handler goes to previous track.
+                    if (e.detail > 1) {
+                        return;
+                    }
+                    playbackManager.previousChapter(currentPlayer);
+                    return;
+                }
+
                 if (playbackManager.isPlayingAudio(currentPlayer)) {
                     // Cancel this event if doubleclick is fired. The actual previousTrack will be processed by the 'dblclick' event
                     if (e.detail > 1 ) {
