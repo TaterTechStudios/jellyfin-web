@@ -425,12 +425,59 @@ export default function () {
         buttonVisible(btnPlayPause, isActive);
     }
 
+    // Audible-style: for audiobooks with chapters, the position slider and time
+    // readout represent the CURRENT chapter rather than the whole book.
+    function getChapterList() {
+        return lastPlayerState?.NowPlayingItem?.Chapters;
+    }
+
+    function chapterModeActive() {
+        if (userSettings.audiobookProgressMode() !== 'chapter') return false;
+        return lastPlayerState?.NowPlayingItem?.Type === 'AudioBook' && getChapterList()?.length > 0;
+    }
+
+    // Resolve the start/end ticks (whole-book scale) of the chapter containing positionTicks.
+    // Returns null if it can't be resolved (e.g. the last chapter's end is unknown because
+    // the book runtime isn't available), so callers fall back to whole-book display.
+    function getChapterBounds(positionTicks, bookRuntimeTicks) {
+        const chapters = getChapterList();
+        if (!chapters?.length || positionTicks == null) return null;
+        for (let i = chapters.length - 1; i >= 0; i--) {
+            if (chapters[i].StartPositionTicks <= positionTicks) {
+                const start = chapters[i].StartPositionTicks;
+                const isLast = i + 1 >= chapters.length;
+                const end = isLast ? bookRuntimeTicks : chapters[i + 1].StartPositionTicks;
+                if (end == null || end <= start) return null;
+                return { start, end, duration: end - start, chapter: chapters[i], index: i };
+            }
+        }
+        return null;
+    }
+
+    // Format whole-book time remaining for the Audible-style center label, adjusted for playback
+    // speed (faster speed -> less real time left), e.g. "17h 37m left (1.25x)".
+    function formatBookRemaining(remainingTicks, rate) {
+        const TICKS_PER_MINUTE = 600000000;
+        const safeRate = rate > 0 ? rate : 1;
+        const totalMinutes = Math.max(0, Math.round(remainingTicks / safeRate / TICKS_PER_MINUTE));
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        let text = hours > 0 ? `${hours}h ${minutes}m left` : `${minutes}m left`;
+        if (safeRate !== 1) {
+            text += ` (${safeRate}x)`;
+        }
+        return text;
+    }
+
     function updateTimeDisplay(positionTicks, runtimeTicks) {
         const context = dlg;
         const positionSlider = context.querySelector('.nowPlayingPositionSlider');
+        const bounds = chapterModeActive() ? getChapterBounds(positionTicks, runtimeTicks) : null;
 
         if (positionSlider && !positionSlider.dragging) {
-            if (runtimeTicks) {
+            if (bounds) {
+                positionSlider.value = (positionTicks - bounds.start) / bounds.duration * 100;
+            } else if (runtimeTicks) {
                 let pct = positionTicks / runtimeTicks;
                 pct *= 100;
                 positionSlider.value = pct;
@@ -439,8 +486,23 @@ export default function () {
             }
         }
 
-        context.querySelector('.positionTime').innerHTML = Number.isFinite(positionTicks) ? datetime.getDisplayRunningTime(positionTicks) : '--:--';
-        context.querySelector('.runtime').innerHTML = Number.isFinite(runtimeTicks) ? datetime.getDisplayRunningTime(runtimeTicks) : '--:--';
+        const bookRemainingEl = context.querySelector('.nowPlayingBookRemaining');
+        if (bounds) {
+            // Chapter-scoped (Audible-style): chapter elapsed (left) · book remaining (center) · chapter remaining (right).
+            context.querySelector('.positionTime').innerHTML = Number.isFinite(positionTicks) ? datetime.getDisplayRunningTime(positionTicks - bounds.start) : '--:--';
+            context.querySelector('.runtime').innerHTML = Number.isFinite(positionTicks) ? '-' + datetime.getDisplayRunningTime(bounds.end - positionTicks) : '--:--';
+            if (bookRemainingEl) {
+                const rate = playbackManager.getPlaybackRate(currentPlayer) || 1;
+                bookRemainingEl.textContent = formatBookRemaining(runtimeTicks - positionTicks, rate);
+                bookRemainingEl.classList.remove('hide');
+            }
+        } else {
+            context.querySelector('.positionTime').innerHTML = Number.isFinite(positionTicks) ? datetime.getDisplayRunningTime(positionTicks) : '--:--';
+            context.querySelector('.runtime').innerHTML = Number.isFinite(runtimeTicks) ? datetime.getDisplayRunningTime(runtimeTicks) : '--:--';
+            if (bookRemainingEl) {
+                bookRemainingEl.classList.add('hide');
+            }
+        }
 
         const chapterNameEl = context.querySelector('.nowPlayingChapterName');
         if (chapterNameEl) {
@@ -448,7 +510,10 @@ export default function () {
             if (chapters?.length && Number.isFinite(positionTicks)) {
                 let chapter;
                 for (let i = chapters.length - 1; i >= 0; i--) {
-                    if (chapters[i].StartPositionTicks <= positionTicks) { chapter = chapters[i]; break; }
+                    if (chapters[i].StartPositionTicks <= positionTicks) {
+                        chapter = chapters[i];
+                        break;
+                    }
                 }
                 chapterNameEl.textContent = chapter ? chapter.Name : '';
                 chapterNameEl.style.display = chapter ? '' : 'none';
@@ -792,6 +857,17 @@ export default function () {
 
             if (currentPlayer) {
                 const newPercent = parseFloat(value);
+
+                if (chapterModeActive()) {
+                    const positionTicks = playbackManager.currentTime(currentPlayer) * 10000;
+                    const bounds = getChapterBounds(positionTicks, playbackManager.duration(currentPlayer));
+                    if (bounds) {
+                        // newPercent is relative to the current chapter, not the whole book.
+                        playbackManager.seek(bounds.start + (bounds.duration * newPercent / 100), currentPlayer);
+                        return;
+                    }
+                }
+
                 playbackManager.seekPercent(newPercent, currentPlayer);
             }
         });
@@ -803,6 +879,15 @@ export default function () {
                 return '--:--';
             }
 
+            if (chapterModeActive() && currentPlayer) {
+                const positionTicks = playbackManager.currentTime(currentPlayer) * 10000;
+                const bounds = getChapterBounds(positionTicks, currentRuntimeTicks);
+                if (bounds) {
+                    // value is relative to the current chapter.
+                    return datetime.getDisplayRunningTime(bounds.duration / 100 * value);
+                }
+            }
+
             const ticks = currentRuntimeTicks / 100 * value;
             let text = datetime.getDisplayRunningTime(ticks);
 
@@ -810,7 +895,10 @@ export default function () {
             if (chapters?.length) {
                 let chapter;
                 for (let i = chapters.length - 1; i >= 0; i--) {
-                    if (chapters[i].StartPositionTicks <= ticks) { chapter = chapters[i]; break; }
+                    if (chapters[i].StartPositionTicks <= ticks) {
+                        chapter = chapters[i];
+                        break;
+                    }
                 }
                 if (chapter) text += ' · ' + chapter.Name;
             }
@@ -819,6 +907,8 @@ export default function () {
         };
 
         positionSlider.getMarkerInfo = function () {
+            // In chapter mode the slider spans a single chapter, so whole-book markers don't apply.
+            if (chapterModeActive()) return [];
             const item = lastPlayerState?.NowPlayingItem;
             if (!item?.Chapters?.length || !item.RunTimeTicks) return [];
             return item.Chapters.map(chapter => ({
