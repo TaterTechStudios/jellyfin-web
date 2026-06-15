@@ -89,6 +89,12 @@ export async function getCommands(options) {
                 id: 'audiobookChapters',
                 icon: 'list'
             });
+            const currentRate = parseFloat(userSettings.get('audioBookPlaybackRate')) || 1;
+            commands.push({
+                name: globalize.translate('PlaybackRate') + ' (' + Number(currentRate).toFixed(2) + 'x)',
+                id: 'audiobookPlaybackRate',
+                icon: 'speed'
+            });
         }
     }
 
@@ -421,6 +427,28 @@ function showAudioBookChapterMenu() {
     });
 }
 
+function showAudioBookRateMenu() {
+    const player = playbackManager.getCurrentPlayer();
+    const currentRate = parseFloat(userSettings.get('audioBookPlaybackRate')) || 1;
+
+    const rates = [0.8, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.25, 2.5];
+    const menuItems = rates.map(r => ({
+        name: r + 'x',
+        id: String(r),
+        selected: Math.abs(r - currentRate) < 0.01
+    }));
+
+    return actionsheet.show({
+        items: menuItems
+    }).then(function (id) {
+        if (id) {
+            const rate = parseFloat(id);
+            userSettings.set('audioBookPlaybackRate', String(rate));
+            playbackManager.restartStream(player);
+        }
+    });
+}
+
 function getResolveFunction(resolve, commandId, changed, deleted, itemId) {
     return function () {
         resolve({
@@ -704,6 +732,10 @@ function executeCommand(item, id, options) {
                 break;
             case 'audiobookChapters':
                 showAudioBookChapterMenu();
+                getResolveFunction(resolve, id)();
+                break;
+            case 'audiobookPlaybackRate':
+                showAudioBookRateMenu();
                 getResolveFunction(resolve, id)();
                 break;
             default:

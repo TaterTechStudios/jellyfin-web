@@ -9,7 +9,7 @@ import Events from '../../utils/events.ts';
 import browser from '../../scripts/browser';
 import imageLoader from '../images/imageLoader';
 import layoutManager from '../layoutManager';
-import { playbackManager } from '../playback/playbackmanager';
+import { playbackManager, getAudiobookPlaybackRate } from '../playback/playbackmanager';
 import { appHost } from '../apphost';
 import dom from '../../utils/dom';
 import globalize from 'lib/globalize';
@@ -548,7 +548,17 @@ function updateTimeDisplay(positionTicks, runtimeTicks, bufferedRanges) {
         } else {
             timeText = positionTicks == null ? '--:--' : datetime.getDisplayRunningTime(positionTicks);
             if (runtimeTicks) {
-                timeText += ' / ' + datetime.getDisplayRunningTime(runtimeTicks);
+                // For audiobooks in whole-book mode, show time remaining adjusted for playback speed.
+                let runtimeText;
+                const item = getPlayingItem();
+                if (item?.Type === 'AudioBook' && positionTicks != null) {
+                    const rate = getAudiobookPlaybackRate();
+                    if (rate) {
+                        const remainingTicks = Math.max(0, runtimeTicks - positionTicks);
+                        runtimeText = datetime.getDisplayRunningTime(remainingTicks / rate);
+                    }
+                }
+                timeText += ' / ' + (runtimeText ?? datetime.getDisplayRunningTime(runtimeTicks));
             }
         }
 

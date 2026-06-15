@@ -9,7 +9,7 @@ import datetime from '../../scripts/datetime';
 import { clearBackdrop, setBackdrops } from '../backdrop/backdrop';
 import listView from '../listview/listview';
 import imageLoader from '../images/imageLoader';
-import { playbackManager } from '../playback/playbackmanager';
+import { playbackManager, getAudiobookPlaybackRate } from '../playback/playbackmanager';
 import Events from '../../utils/events.ts';
 import { appHost } from '../apphost';
 import globalize from '../../lib/globalize';
@@ -492,13 +492,28 @@ export default function () {
             context.querySelector('.positionTime').innerHTML = Number.isFinite(positionTicks) ? datetime.getDisplayRunningTime(positionTicks - bounds.start) : '--:--';
             context.querySelector('.runtime').innerHTML = Number.isFinite(positionTicks) ? '-' + datetime.getDisplayRunningTime(bounds.end - positionTicks) : '--:--';
             if (bookRemainingEl) {
-                const rate = playbackManager.getPlaybackRate(currentPlayer) || 1;
+                const rate = getAudiobookPlaybackRate() || 1;
                 bookRemainingEl.textContent = formatBookRemaining(runtimeTicks - positionTicks, rate);
                 bookRemainingEl.classList.remove('hide');
             }
         } else {
+            // Whole-book mode: for audiobooks, show time remaining adjusted for playback speed.
             context.querySelector('.positionTime').innerHTML = Number.isFinite(positionTicks) ? datetime.getDisplayRunningTime(positionTicks) : '--:--';
-            context.querySelector('.runtime').innerHTML = Number.isFinite(runtimeTicks) ? datetime.getDisplayRunningTime(runtimeTicks) : '--:--';
+            let runtimeDisplay;
+            if (Number.isFinite(runtimeTicks)) {
+                const item = lastPlayerState?.NowPlayingItem;
+                if (item?.Type === 'AudioBook' && Number.isFinite(positionTicks)) {
+                    const rate = getAudiobookPlaybackRate();
+                    if (rate) {
+                        const remainingTicks = Math.max(0, runtimeTicks - positionTicks);
+                        runtimeDisplay = datetime.getDisplayRunningTime(remainingTicks / rate);
+                    }
+                }
+                runtimeDisplay = runtimeDisplay ?? datetime.getDisplayRunningTime(runtimeTicks);
+            } else {
+                runtimeDisplay = '--:--';
+            }
+            context.querySelector('.runtime').innerHTML = runtimeDisplay;
             if (bookRemainingEl) {
                 bookRemainingEl.classList.add('hide');
             }
