@@ -288,7 +288,7 @@ function bindEvents(elem) {
             const newPercent = parseFloat(this.value);
 
             if (chapterModeActive()) {
-                const positionTicks = playbackManager.currentTime(currentPlayer) * 10000;
+                const positionTicks = playbackManager.getCurrentTicks(currentPlayer);
                 const bounds = getChapterBounds(positionTicks, playbackManager.duration(currentPlayer));
                 if (bounds) {
                     // newPercent is relative to the current chapter, not the whole book.
@@ -309,7 +309,7 @@ function bindEvents(elem) {
         }
 
         if (chapterModeActive() && currentPlayer) {
-            const positionTicks = playbackManager.currentTime(currentPlayer) * 10000;
+            const positionTicks = playbackManager.getCurrentTicks(currentPlayer);
             const bounds = getChapterBounds(positionTicks, currentRuntimeTicks);
             if (bounds) {
                 // value is relative to the current chapter.
@@ -821,7 +821,7 @@ function onTimeUpdate() {
 
     const player = this;
     currentRuntimeTicks = playbackManager.duration(player);
-    updateTimeDisplay(playbackManager.currentTime(player) * 10000, currentRuntimeTicks, playbackManager.getBufferedRanges(player));
+    updateTimeDisplay(playbackManager.getCurrentTicks(player), currentRuntimeTicks, playbackManager.getBufferedRanges(player));
 }
 
 function releaseCurrentPlayer() {
