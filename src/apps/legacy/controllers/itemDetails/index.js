@@ -560,7 +560,9 @@ function reloadFromItem(instance, page, params, item, user) {
     // Start rendering the artwork first
     renderImage(page, item, apiClient);
 
-    renderLogo(page, item, apiClient);
+    if (item.Type !== 'AudioBook') { // Local change only, don't add to any PRs
+        renderLogo(page, item, apiClient); // Local change only, don't add to any PRs
+    } // Local change only, don't add to any PRs
 
     // Render the mobile header backdrop
     if (layoutManager.mobile) {
