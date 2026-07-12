@@ -69,6 +69,7 @@
     "AsManyAsPossible": "As many as possible",
     "AspectRatio": "Aspect Ratio",
     "Audio": "Audio",
+    "AudioBooks": "AudioBooks",
     "AudiobookProgressModeBook": "Whole book",
     "AudiobookProgressModeChapter": "Current chapter",
     "AudiobookProgressModeHelp": "Choose whether the playback progress bar and times for audiobooks represent the whole book or just the current chapter.",

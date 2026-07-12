@@ -1,4 +1,5 @@
 import type { ItemCounts } from '@jellyfin/sdk/lib/generated-client/models/item-counts';
+import PlayLesson from '@mui/icons-material/PlayLesson';
 import Book from '@mui/icons-material/Book';
 import Movie from '@mui/icons-material/Movie';
 import MusicNote from '@mui/icons-material/MusicNote';
@@ -46,6 +47,9 @@ const CARD_DEFINITIONS: CardDefinition[] = [
     }, {
         Icon: Book,
         metrics: [{ key: 'BookCount', i18n: 'Books' }]
+    }, {
+        Icon: PlayLesson,
+        metrics: [{ key: 'AudioBookCount', i18n: 'AudioBooks' }]
     }, {
         Icon: VideoLibrary,
         metrics: [{ key: 'BoxSetCount', i18n: 'Collections' }]
