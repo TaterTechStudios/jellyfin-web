@@ -7,6 +7,7 @@ import { getDeviceIcon } from 'utils/image';
 import Stack from '@mui/material/Stack';
 import getNowPlayingName from '../../sessions/utils/getNowPlayingName';
 import getSessionNowPlayingTime from '../../sessions/utils/getSessionNowPlayingTime';
+import getSessionTranscodingBufferPercentage from '../../sessions/utils/getSessionTranscodingBufferPercentage';
 import getNowPlayingImageUrl from '../../sessions/utils/getNowPlayingImageUrl';
 import { getDefaultBackgroundClass } from 'components/cardbuilder/utils/builder';
 import Comment from '@mui/icons-material/Comment';
@@ -205,7 +206,7 @@ const DeviceCard = ({ device }: DeviceCardProps) => {
                 <LinearProgress
                     variant='buffer'
                     value={(device.PlayState.PositionTicks / device.NowPlayingItem.RunTimeTicks) * 100}
-                    valueBuffer={device.TranscodingInfo?.CompletionPercentage || 0}
+                    valueBuffer={getSessionTranscodingBufferPercentage(device)}
                     sx={{
                         '& .MuiLinearProgress-dashed': {
                             animation: 'none',
