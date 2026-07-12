@@ -1838,6 +1838,7 @@
     "VideoLevelNotSupported": "The video codec's level is not supported",
     "VideoProfileNotSupported": "The video codec's profile is not supported",
     "AudioBitDepthNotSupported": "The audio's bit depth is not supported",
+    "AudioPlaybackRateRequested": "A non-standard playback speed was requested",
     "ContainerBitrateExceedsLimit": "The video's bitrate exceeds the limit",
     "PreferSystemNativeHwDecoder": "Prefer OS native DXVA or VA-API hardware decoders",
     "EnableIntelLowPowerH264HwEncoder": "Enable Intel Low-Power H.264 hardware encoder",
