@@ -21,6 +21,9 @@ const DEFAULT_IMAGE_SIZES = [512, 384, 256, 192, 128, 96];
 const hasNavigatorSession = 'mediaSession' in navigator;
 const hasNativeShell = !!window.NativeShell;
 
+/** Minimum interval between position pushes to the media session during continuous playback. */
+const MEDIA_SESSION_POSITION_THROTTLE_MS = 5 * MILLISECONDS_PER_SECOND;
+
 const getArtwork = (item: ItemDto): MediaImage[] => {
     const artwork: MediaImage[] = [];
 
@@ -47,6 +50,9 @@ const resetMediaSession = () => {
 
 /** A PlaybackSubscriber that manages MediaSession state and events. */
 class MediaSessionSubscriber extends PlaybackSubscriber {
+    // NEGATIVE_INFINITY => the first timeupdate always pushes immediately, then throttles
+    private lastPositionUpdate = Number.NEGATIVE_INFINITY;
+
     constructor(playbackManager: PlaybackManager) {
         super(playbackManager);
 
@@ -153,7 +159,8 @@ class MediaSessionSubscriber extends PlaybackSubscriber {
                 position: state.PlayState.PositionTicks ? Math.round(state.PlayState.PositionTicks / TICKS_PER_MILLISECOND) : 0,
                 imageUrl: getImageUrl(item, { maxHeight: 3_000 }),
                 canSeek: !!state.PlayState.CanSeek,
-                isPaused: !!state.PlayState.IsPaused
+                isPaused: !!state.PlayState.IsPaused,
+                playbackRate: state.PlayState.PlaybackRate || 1
             });
         }
     }
@@ -176,6 +183,13 @@ class MediaSessionSubscriber extends PlaybackSubscriber {
 
     onPlayerStateChange(e: Event, state: PlayerState) {
         this.onMediaSessionUpdate(e, state);
+    }
+
+    onPlayerTimeUpdate(e: Event) {
+        const now = Date.now();
+        if (now - this.lastPositionUpdate < MEDIA_SESSION_POSITION_THROTTLE_MS) return;
+        this.lastPositionUpdate = now;
+        this.onMediaSessionUpdate(e);
     }
 
     onPlayerUnpause(e: Event) {
