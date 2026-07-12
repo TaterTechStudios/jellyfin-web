@@ -68,7 +68,7 @@ function buildChapterCardsHtml(item, chapters, options) {
     return html;
 }
 
-function getImgUrl({ Id }, { ImageTag }, index, maxWidth, apiClient) {
+function getImgUrl({ Id, ImageTags }, { ImageTag }, index, maxWidth, apiClient) {
     if (ImageTag) {
         return apiClient.getScaledImageUrl(Id, {
 
@@ -76,6 +76,14 @@ function getImgUrl({ Id }, { ImageTag }, index, maxWidth, apiClient) {
             tag: ImageTag,
             type: 'Chapter',
             index
+        });
+    }
+
+    if (ImageTags?.Primary) {
+        return apiClient.getScaledImageUrl(Id, {
+            maxWidth: maxWidth,
+            tag: ImageTags.Primary,
+            type: 'Primary'
         });
     }
 

@@ -1485,6 +1485,9 @@ function renderChildren(page, item) {
             }, {
                 name: globalize.translate('Collections'),
                 type: 'BoxSet'
+            }, {
+                name: globalize.translate('HeaderAudioBooks'),
+                type: 'Audiobook'
             }];
             renderCollectionItems(page, item, collectionItemTypes, result.Items);
         }
@@ -1786,7 +1789,7 @@ function renderAdditionalParts(page, item, user) {
 function renderScenes(page, item) {
     let chapters = item.Chapters || [];
 
-    if (chapters.length && !chapters[0].ImageTag) {
+    if (chapters.length && !chapters[0].ImageTag && item.Type !== BaseItemKind.AudioBook) {
         chapters = [];
     }
 
