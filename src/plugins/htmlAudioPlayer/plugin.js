@@ -650,7 +650,11 @@ class HtmlAudioPlayer {
     unpause() {
         const mediaElement = this._mediaElement;
         if (mediaElement) {
-            mediaElement.play();
+            // If the underlying connection died while backgrounded, rebuild the stream from the last known
+            // position instead of leaving playback silently stuck.
+            mediaElement.play().catch(() => {
+                htmlMediaHelper.onErrorInternal(this, MediaError.NETWORK_ERROR);
+            });
         }
     }
 
