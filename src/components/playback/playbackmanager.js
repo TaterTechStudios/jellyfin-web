@@ -2229,6 +2229,12 @@ export class PlaybackManager {
             // getAdditionalParts returns an array of arrays of items, so flatten it
             items = items.flat();
 
+            // Audiobooks: resume from the server's authoritative position, not a possibly-stale cached value from a backgrounded app. Honors rewinds and forward progress; an explicit play-from-beginning keeps its 0.
+            const resumeItem = items[0];
+            if (resumeItem?.Type === 'AudioBook' && options.startPositionTicks > 0) {
+                options.startPositionTicks = resumeItem.UserData?.PlaybackPositionTicks || options.startPositionTicks;
+            }
+
             return playWithIntros(items, options);
         };
 
@@ -2363,23 +2369,30 @@ export class PlaybackManager {
 
             let playerTime = Math.floor(10000 * (player).currentTime());
 
-            const streamInfo = getPlayerData(player).streamInfo;
+            const playerData = getPlayerData(player);
+            const streamInfo = playerData.streamInfo;
 
+            let ticks;
             const currentItem = self.currentItem(player);
             if (currentItem?.Type === 'AudioBook' && streamInfo) {
                 const rate = getAudiobookPlaybackRate();
-                if (rate) {
-                    return Math.floor(playerTime * rate) + getAudiobookSourceOffsetTicks(player);
+                ticks = rate ?
+                    Math.floor(playerTime * rate) + getAudiobookSourceOffsetTicks(player) :
+                    playerTime + (streamInfo.transcodingOffsetTicks || 0) + getAudiobookSourceOffsetTicks(player);
+            } else {
+                if (streamInfo) {
+                    playerTime += streamInfo.transcodingOffsetTicks || 0;
                 }
 
-                return playerTime + (streamInfo.transcodingOffsetTicks || 0) + getAudiobookSourceOffsetTicks(player);
+                ticks = playerTime;
             }
 
-            if (streamInfo) {
-                playerTime += streamInfo.transcodingOffsetTicks || 0;
+            // Remember the last real position so an element reset (e.g. Bluetooth route loss) doesn't fall back to the stream's origin on retry.
+            if (ticks > 0) {
+                playerData.lastKnownPositionTicks = ticks;
             }
 
-            return playerTime;
+            return ticks;
         }
 
         // Only used internally
@@ -3569,7 +3582,7 @@ export class PlaybackManager {
 
                 // Auto switch to transcoding
                 if (enablePlaybackRetryWithTranscoding(streamInfo, errorType, currentlyPreventsVideoStreamCopy, currentlyPreventsAudioStreamCopy)) {
-                    const startTime = getCurrentTicks(player) || streamInfo.playerStartPositionTicks;
+                    const startTime = getCurrentTicks(player) || getPlayerData(player).lastKnownPositionTicks || streamInfo.playerStartPositionTicks;
                     const isRemoteSource = streamInfo.item.LocationType === 'Remote';
                     // force transcoding and only allow remuxing for remote source like liveTV, but only for initial trial
                     const tryVideoStreamCopy = isRemoteSource && !isAlreadyFallbacking;
@@ -3626,6 +3639,11 @@ export class PlaybackManager {
 
                 // only used internally as a safeguard to avoid reporting other events to the server after playback stopped
                 streamInfo.ended = true;
+
+                // Error-triggered stops (e.g. losing the audio route on Bluetooth disconnect) report an unreliable position; flag as failed so the server keeps the saved resume point.
+                if (errorOccurred && state.PlayState) {
+                    state.PlayState.Failed = true;
+                }
 
                 reportPlayback(self, state, player, true, streamInfo.item.ServerId, 'reportPlaybackStopped');
             }
