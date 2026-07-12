@@ -1703,6 +1703,22 @@ export class PlaybackManager {
             return getPlayerData(player).audiobookSources || null;
         };
 
+        function getNextAudiobookSource(player) {
+            const playerData = getPlayerData(player);
+            const audiobookSources = playerData.audiobookSources;
+            if (!audiobookSources?.length) {
+                return null;
+            }
+
+            const currentSourceId = playerData.streamInfo?.mediaSource?.Id;
+            const currentSourceIndex = audiobookSources.findIndex(s => s.Id === currentSourceId);
+            if (currentSourceIndex < 0 || currentSourceIndex >= audiobookSources.length - 1) {
+                return null;
+            }
+
+            return audiobookSources[currentSourceIndex + 1];
+        }
+
         self.seekToAudiobookChapter = function (chapterIndex, player) {
             player = player || self._currentPlayer;
             const item = self.currentItem(player);
@@ -1804,7 +1820,7 @@ export class PlaybackManager {
 
             const currentItem = self.currentItem(player);
 
-            player.getDeviceProfile(currentItem, {
+            return player.getDeviceProfile(currentItem, {
                 isRetry: params.EnableDirectPlay === false
             }).then(function (deviceProfile) {
                 const audioStreamIndex = params.AudioStreamIndex == null ? getPlayerData(player).audioStreamIndex : params.AudioStreamIndex;
@@ -1846,8 +1862,21 @@ export class PlaybackManager {
                         streamInfo.resetSubtitleOffset = false;
 
                         if (!streamInfo.url) {
+                            if (params.preloadOnly) {
+                                return;
+                            }
                             cancelPlayback();
                             showPlaybackInfoErrorMessage(self, `PlaybackError.${MediaError.NO_MEDIA_ERROR}`);
+                            return;
+                        }
+
+                        if (params.preloadOnly) {
+                            getPlayerData(player).preloadedAudiobookStream = {
+                                mediaSourceId: params.mediaSourceId,
+                                streamInfo,
+                                apiClient
+                            };
+                            player.preloadNext?.(streamInfo);
                             return;
                         }
 
@@ -1862,7 +1891,38 @@ export class PlaybackManager {
             });
         }
 
-        function changeStreamToUrl(apiClient, player, playSessionId, streamInfo) {
+        // Fetch the next audiobook file's stream info and start buffering it in the background, so the boundary switch is a swap instead of a cold start
+        const AUDIOBOOK_PRELOAD_THRESHOLD_MS = 5000;
+
+        function preloadNextAudiobookSourceIfNeeded(player) {
+            const nextSource = getNextAudiobookSource(player);
+            if (!nextSource) {
+                return;
+            }
+
+            const playerData = getPlayerData(player);
+            if (playerData.preloadedAudiobookStream?.mediaSourceId === nextSource.Id
+                || playerData.preloadingAudiobookSourceId === nextSource.Id) {
+                return;
+            }
+
+            const duration = player.duration();
+            if (!duration) {
+                return;
+            }
+
+            const remaining = duration - player.currentTime();
+            if (remaining < 0 || remaining > AUDIOBOOK_PRELOAD_THRESHOLD_MS) {
+                return;
+            }
+
+            playerData.preloadingAudiobookSourceId = nextSource.Id;
+            changeStream(player, 0, { mediaSourceId: nextSource.Id, preloadOnly: true })?.catch(function () {
+                playerData.preloadingAudiobookSourceId = null;
+            });
+        }
+
+        function changeStreamToUrl(apiClient, player, playSessionId, streamInfo, usePreload) {
             const playerData = getPlayerData(player);
 
             playerData.isChangingStream = true;
@@ -1873,19 +1933,29 @@ export class PlaybackManager {
                     const afterSetSrc = function () {
                         apiClient.stopActiveEncodings(playSessionId);
                     };
-                    setSrcIntoPlayer(apiClient, player, streamInfo).then(afterSetSrc, afterSetSrc);
+                    setSrcIntoPlayer(apiClient, player, streamInfo, usePreload).then(afterSetSrc, afterSetSrc);
                 });
             } else {
-                setSrcIntoPlayer(apiClient, player, streamInfo);
+                setSrcIntoPlayer(apiClient, player, streamInfo, usePreload);
             }
         }
 
-        function setSrcIntoPlayer(apiClient, player, streamInfo) {
+        function setSrcIntoPlayer(apiClient, player, streamInfo, usePreload) {
             const playerData = getPlayerData(player);
 
             playerData.streamInfo = streamInfo;
+            playerData.preloadedAudiobookStream = null;
+            playerData.preloadingAudiobookSourceId = null;
 
-            return player.play(streamInfo).then(function () {
+            // If the next audiobook source was preloaded ahead of the boundary, promote that buffered element
+            // instead of cold-starting playback; fall back to a normal play() if the preload wasn't usable.
+            const startPlayback = usePreload && player.promotePreload ?
+                player.promotePreload().then(function (promoted) {
+                    return promoted ? undefined : player.play(streamInfo);
+                }) :
+                player.play(streamInfo);
+
+            return startPlayback.then(function () {
                 loading.hide();
                 playerData.isChangingStream = false;
                 streamInfo.started = true;
@@ -3649,14 +3719,17 @@ export class PlaybackManager {
             }
 
             if (self._playNextAfterEnded && !errorOccurred) {
-                const audiobookSources = data.audiobookSources;
-                if (audiobookSources?.length) {
-                    const currentSourceId = data.streamInfo?.mediaSource?.Id;
-                    const currentSourceIndex = audiobookSources.findIndex(s => s.Id === currentSourceId);
-                    if (currentSourceIndex >= 0 && currentSourceIndex < audiobookSources.length - 1) {
-                        changeStream(player, 0, { mediaSourceId: audiobookSources[currentSourceIndex + 1].Id });
-                        return;
+                const nextSource = getNextAudiobookSource(player);
+                if (nextSource) {
+                    const preloaded = data.preloadedAudiobookStream;
+                    const cacheHit = preloaded?.mediaSourceId === nextSource.Id;
+                    if (cacheHit) {
+                        data.preloadedAudiobookStream = null;
+                        changeStreamToUrl(preloaded.apiClient, player, self.playSessionId(player), preloaded.streamInfo, true);
+                    } else {
+                        changeStream(player, 0, { mediaSourceId: nextSource.Id });
                     }
+                    return;
                 }
             }
 
@@ -3747,6 +3820,7 @@ export class PlaybackManager {
 
         function onPlaybackTimeUpdate() {
             const player = this;
+            preloadNextAudiobookSourceIfNeeded(player);
             sendProgressUpdate(player, 'timeupdate');
         }
 

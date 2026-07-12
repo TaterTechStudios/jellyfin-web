@@ -99,6 +99,8 @@ class HtmlAudioPlayer {
         self.priority = 1;
 
         self.play = function (options) {
+            resetPreload();
+
             self._started = false;
             self._timeUpdated = false;
             self._currentTime = null;
@@ -231,6 +233,7 @@ class HtmlAudioPlayer {
 
         self.stop = function (destroyPlayer) {
             cancelFadeTimeout();
+            resetPreload();
 
             const elem = self._mediaElement;
             const src = self._currentSrc;
@@ -266,7 +269,148 @@ class HtmlAudioPlayer {
         self.destroy = function () {
             unBindEvents(self._mediaElement);
             htmlMediaHelper.resetSrc(self._mediaElement);
+            resetPreload();
         };
+
+        // Starts fetching and buffering the given stream in a hidden element, ahead of an anticipated switch.
+        // Call promotePreload() to swap it in, or let it get superseded/discarded by the next preloadNext() call.
+        self.preloadNext = function (options) {
+            resetPreload();
+
+            const elem = createPreloadMediaElement();
+            self._preloadElement = elem;
+            self._preloadOptions = options;
+            self._preloadErrored = false;
+
+            elem.addEventListener('error', onPreloadError);
+
+            const val = options.url;
+
+            enableHlsPlayer(val, options.item, options.mediaSource, 'Audio').then(function () {
+                requireHlsPlayer(async () => {
+                    // superseded by a newer preloadNext() call while hls.js was loading
+                    if (self._preloadElement !== elem) {
+                        return;
+                    }
+
+                    const includeCorsCredentials = await getIncludeCorsCredentials();
+
+                    const hls = new Hls({
+                        manifestLoadingTimeOut: 20000,
+                        xhrSetup: function (xhr) {
+                            xhr.withCredentials = includeCorsCredentials;
+                        }
+                    });
+                    hls.on(Hls.Events.ERROR, function (event, data) {
+                        // Non-fatal errors (e.g. bufferFullError once the unplayed element's buffer target is hit) are
+                        // expected while preloading and don't mean the stream is unusable.
+                        if (data?.fatal) {
+                            onPreloadError();
+                        }
+                    });
+                    hls.loadSource(val);
+                    hls.attachMedia(elem);
+
+                    self._preloadHlsPlayer = hls;
+                });
+            }, async () => {
+                const includeCorsCredentials = await getIncludeCorsCredentials();
+                if (includeCorsCredentials) {
+                    elem.crossOrigin = 'use-credentials';
+                }
+
+                htmlMediaHelper.applySrc(elem, val, options).catch(onPreloadError);
+            });
+        };
+
+        // Swaps the preloaded element in as the active one. Resolves false (leaving the caller to fall back
+        // to a normal play()) if there's nothing usable preloaded.
+        self.promotePreload = function () {
+            const elem = self._preloadElement;
+            const options = self._preloadOptions;
+
+            if (!elem || !options || self._preloadErrored) {
+                resetPreload();
+                return Promise.resolve(false);
+            }
+
+            const hls = self._preloadHlsPlayer;
+            self._preloadElement = null;
+            self._preloadHlsPlayer = null;
+            self._preloadOptions = null;
+            elem.removeEventListener('error', onPreloadError);
+
+            htmlMediaHelper.destroyHlsPlayer(self);
+            if (self._mediaElement && self._mediaElement !== elem) {
+                unBindEvents(self._mediaElement);
+                htmlMediaHelper.resetSrc(self._mediaElement);
+                self._mediaElement.remove();
+            }
+
+            elem.classList.remove('mediaPlayerAudioPreload');
+            elem.classList.add('mediaPlayerAudio');
+            elem.muted = false;
+
+            self._mediaElement = elem;
+            self._hlsPlayer = hls;
+            self._currentSrc = options.url;
+            self._currentPlayOptions = options;
+            self._started = false;
+            self._timeUpdated = false;
+            self._currentTime = null;
+            self._pendingSeekTarget = null;
+
+            bindEvents(elem);
+
+            return htmlMediaHelper.playWithPromise(elem, onError).then(function () {
+                return true;
+            }, function () {
+                // Roll back the swap so a fallback play() builds a genuinely fresh element instead of reusing this broken one.
+                unBindEvents(elem);
+                htmlMediaHelper.resetSrc(elem);
+                elem.remove();
+                self._mediaElement = null;
+                self._hlsPlayer = null;
+                return false;
+            });
+        };
+
+        function onPreloadError() {
+            self._preloadErrored = true;
+        }
+
+        function createPreloadMediaElement() {
+            const elem = document.createElement('audio');
+            elem.classList.add('mediaPlayerAudioPreload');
+            elem.classList.add('hide');
+            elem.muted = true;
+            elem.preload = 'auto';
+
+            document.body.appendChild(elem);
+
+            return elem;
+        }
+
+        function resetPreload() {
+            if (self._preloadHlsPlayer) {
+                try {
+                    self._preloadHlsPlayer.destroy();
+                } catch (err) {
+                    console.error(err);
+                }
+                self._preloadHlsPlayer = null;
+            }
+
+            if (self._preloadElement) {
+                self._preloadElement.removeEventListener('error', onPreloadError);
+                htmlMediaHelper.resetSrc(self._preloadElement);
+                self._preloadElement.remove();
+                self._preloadElement = null;
+            }
+
+            self._preloadOptions = null;
+            self._preloadErrored = false;
+        }
 
         function createMediaElement() {
             let elem = self._mediaElement;
