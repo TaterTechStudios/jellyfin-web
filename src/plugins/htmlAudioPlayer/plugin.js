@@ -179,6 +179,7 @@ class HtmlAudioPlayer {
 
                         const hls = new Hls({
                             manifestLoadingTimeOut: 20000,
+                            enableWorker: false,
                             xhrSetup: function (xhr) {
                                 xhr.withCredentials = includeCorsCredentials;
                             }
@@ -349,7 +350,10 @@ class HtmlAudioPlayer {
 
             elem.classList.remove('mediaPlayerAudioPreload');
             elem.classList.add('mediaPlayerAudio');
-            elem.muted = false;
+            if (elem.muted) {
+                self._skipNextVolumeChange = true;
+                elem.muted = false;
+            }
 
             self._mediaElement = elem;
             self._hlsPlayer = hls;
@@ -363,17 +367,57 @@ class HtmlAudioPlayer {
             bindEvents(elem);
 
             return htmlMediaHelper.playWithPromise(elem, onError).then(function () {
-                return true;
+                return confirmPromotedPlaybackProgressing(elem);
             }, function () {
-                // Roll back the swap so a fallback play() builds a genuinely fresh element instead of reusing this broken one.
-                unBindEvents(elem);
-                htmlMediaHelper.resetSrc(elem);
-                elem.remove();
-                self._mediaElement = null;
-                self._hlsPlayer = null;
+                rollBackPromotedElement(elem);
                 return false;
             });
         };
+
+        function confirmPromotedPlaybackProgressing(elem) {
+            const startTime = elem.currentTime;
+
+            return new Promise(function (resolve) {
+                let settled = false;
+
+                function settle(success) {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    elem.removeEventListener('timeupdate', onProgress);
+                    clearTimeout(timeoutId);
+
+                    const stillCurrent = self._mediaElement === elem;
+                    if (!success && stillCurrent) {
+                        rollBackPromotedElement(elem);
+                    }
+                    resolve(success || !stillCurrent);
+                }
+
+                function onProgress() {
+                    if (elem.currentTime - startTime > 0.3) {
+                        settle(true);
+                    }
+                }
+
+                elem.addEventListener('timeupdate', onProgress);
+                const timeoutId = setTimeout(function () {
+                    settle(elem.currentTime - startTime > 0.3);
+                }, 1500);
+            });
+        }
+
+        function rollBackPromotedElement(elem) {
+            // Roll back the swap so a fallback play() builds a genuinely fresh element instead of reusing this broken one.
+            unBindEvents(elem);
+            htmlMediaHelper.resetSrc(elem);
+            elem.remove();
+            if (self._mediaElement === elem) {
+                self._mediaElement = null;
+                self._hlsPlayer = null;
+            }
+        }
 
         function onPreloadError() {
             self._preloadErrored = true;
@@ -478,6 +522,10 @@ class HtmlAudioPlayer {
         }
 
         function onVolumeChange() {
+            if (self._skipNextVolumeChange) {
+                self._skipNextVolumeChange = false;
+                return;
+            }
             if (!self._isFadingOut) {
                 htmlMediaHelper.saveVolume(this.volume);
                 if (browser.safari && self.gainNode) {

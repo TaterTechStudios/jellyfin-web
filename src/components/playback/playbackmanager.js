@@ -3652,17 +3652,31 @@ export class PlaybackManager {
 
                 // Auto switch to transcoding
                 if (enablePlaybackRetryWithTranscoding(streamInfo, errorType, currentlyPreventsVideoStreamCopy, currentlyPreventsAudioStreamCopy)) {
-                    const startTime = getCurrentTicks(player) || getPlayerData(player).lastKnownPositionTicks || streamInfo.playerStartPositionTicks;
+                    let startTime = getCurrentTicks(player) || getPlayerData(player).lastKnownPositionTicks || streamInfo.playerStartPositionTicks;
                     const isRemoteSource = streamInfo.item.LocationType === 'Remote';
                     // force transcoding and only allow remuxing for remote source like liveTV, but only for initial trial
                     const tryVideoStreamCopy = isRemoteSource && !isAlreadyFallbacking;
 
-                    changeStream(player, startTime, {
+                    const retryParams = {
                         EnableDirectPlay: false,
                         EnableDirectStream: tryVideoStreamCopy,
                         AllowVideoStreamCopy: tryVideoStreamCopy,
                         AllowAudioStreamCopy: currentlyPreventsAudioStreamCopy || currentlyPreventsVideoStreamCopy ? false : null
-                    });
+                    };
+
+                    if (streamInfo.item.Type === BaseItemKind.AudioBook) {
+                        const audiobookSources = getPlayerData(player).audiobookSources;
+
+                        if (audiobookSources?.length > 1) {
+                            const target = getAudiobookPartForGlobalTicks(audiobookSources, startTime);
+                            if (target) {
+                                startTime = target.localTicks;
+                                retryParams.mediaSourceId = target.source.Id;
+                            }
+                        }
+                    }
+
+                    changeStream(player, startTime, retryParams);
 
                     return;
                 }
