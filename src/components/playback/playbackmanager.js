@@ -2299,10 +2299,17 @@ export class PlaybackManager {
             // getAdditionalParts returns an array of arrays of items, so flatten it
             items = items.flat();
 
-            // Audiobooks: resume from the server's authoritative position, not a possibly-stale cached value from a backgrounded app. Honors rewinds and forward progress; an explicit play-from-beginning keeps its 0.
+            // Audiobooks: resume from the server's current position, not a possibly-stale cached value from a backgrounded app. Honors rewinds and forward progress; an explicit play-from-beginning keeps its 0.
             const resumeItem = items[0];
             if (resumeItem?.Type === 'AudioBook' && options.startPositionTicks > 0) {
-                options.startPositionTicks = resumeItem.UserData?.PlaybackPositionTicks || options.startPositionTicks;
+                const apiClient = ServerConnections.getApiClient(resumeItem.ServerId);
+                return apiClient.getItem(apiClient.getCurrentUserId(), resumeItem.Id).then(function (freshItem) {
+                    options.startPositionTicks = freshItem?.UserData?.PlaybackPositionTicks || options.startPositionTicks;
+                    return playWithIntros(items, options);
+                }, function () {
+                    options.startPositionTicks = resumeItem.UserData?.PlaybackPositionTicks || options.startPositionTicks;
+                    return playWithIntros(items, options);
+                });
             }
 
             return playWithIntros(items, options);
