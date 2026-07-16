@@ -34,7 +34,7 @@ function buildChapterCardsHtml(item, chapters, options) {
 
     let shape = (options.backdropShape || 'backdrop');
 
-    if (videoStream.Width && videoStream.Height && (videoStream.Width / videoStream.Height) <= 1.2) {
+    if (item.MediaType === 'Audio' || (videoStream.Width && videoStream.Height && (videoStream.Width / videoStream.Height) <= 1.2)) {
         shape = (options.squareShape || 'square');
     }
 
@@ -105,7 +105,9 @@ function buildChapterCard(item, apiClient, chapter, index, { width, coverImage }
     }
 
     let nameHtml = '';
-    nameHtml += `<div class="cardText">${escapeHtml(chapter.Name)}</div>`;
+    for (const namePart of (chapter.Name || '').split(' - ')) {
+        nameHtml += `<div class="cardText">${escapeHtml(namePart.trim())}</div>`;
+    }
     nameHtml += `<div class="cardText">${datetime.getDisplayRunningTime(chapter.StartPositionTicks)}</div>`;
 
     const cardBoxCssClass = 'cardBox';
